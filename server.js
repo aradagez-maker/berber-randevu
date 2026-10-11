@@ -29,6 +29,8 @@ function save() {
 }
 
 // Şifre: APP_PIN değişkeni ya da ilk açılışta uygulamadan belirlenen şifre
+// Şifre unutulursa: dükkân sahibine verilen kurtarma kodunun özeti (kodun kendisi burada yok)
+const RESET_HASH = "e8f68c416ae63ec5a1d9cf7442039bccde4723946538e983ae5fb7e79dbbc1bc";
 const currentPin = () => PIN || db.pin || "";
 function pinOk(req) {
   const pin = currentPin();
@@ -76,6 +78,16 @@ const server = http.createServer(async (req, res) => {
       const pin = str((await readBody(req)).pin, 32).trim();
       if (pin.length < 4) return send(res, 400, { error: "short" });
       db.pin = pin; save(); return send(res, 200, { ok: true });
+    }
+    if (p === "/api/reset" && req.method === "POST") {
+      const b = await readBody(req);
+      const code = str(b.code, 64).replace(/[\s-]/g, "").toUpperCase();
+      const got = Buffer.from(crypto.createHash("sha256").update(code).digest("hex"));
+      if (!crypto.timingSafeEqual(got, Buffer.from(RESET_HASH))) { await new Promise((r) => setTimeout(r, 1500)); return send(res, 403, { error: "code" }); }
+      const pin = str(b.pin, 32).trim();
+      if (pin.length < 4) return send(res, 400, { error: "short" });
+      db.pin = pin; save();
+      return send(res, 200, { ok: true });
     }
     // Sunucu boş açıldıysa (ör. yeniden başlatma sonrası) cihazdaki yedekten geri yükleme
     if (p === "/api/restore" && req.method === "POST") {

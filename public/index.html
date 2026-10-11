@@ -404,9 +404,32 @@ button { cursor: pointer; }
       ${setup ? `<div>Uygulamayı ilk kez açıyorsunuz. Randevuları korumak için en az 4 haneli bir şifre belirleyin. Bu şifreyi İlhan'a da söyleyin.</div>` : ""}
       <div class="field"><label for="pinIn">${setup ? "Yeni şifre" : "Şifreyi girin"}</label><input id="pinIn" type="password" inputmode="numeric" autocomplete="current-password"></div>
       ${wrong ? `<div class="msg err">${setup ? "Şifre en az 4 haneli olmalı." : "Şifre yanlış, tekrar deneyin."}</div>` : ""}
-      <div class="modal-actions"><button type="button" class="btn btn-red" id="pinOk">Giriş</button></div>`;
+      <div class="modal-actions"><button type="button" class="btn btn-red" id="pinOk">Giriş</button>${setup ? "" : `<span class="spacer"></span><button type="button" class="btn btn-ghost" id="forgotBtn">Şifremi unuttum</button>`}</div>`;
     $("overlay").hidden = false;
     setTimeout(() => $("pinIn") && $("pinIn").focus(), 30);
+  }
+  function showReset(msg) {
+    pinMode = true;
+    $("modal").innerHTML = `<h2 id="mTitle">Şifreyi yenile</h2>
+      <div>Size verilen <b>kurtarma kodunu</b> ve yeni şifreyi yazın. Randevular silinmez.</div>
+      <div class="field"><label for="rCode">Kurtarma kodu</label><input id="rCode" type="text" autocapitalize="characters" autocomplete="off" spellcheck="false"></div>
+      <div class="field"><label for="rPin">Yeni şifre</label><input id="rPin" type="password" inputmode="numeric" autocomplete="new-password"></div>
+      ${msg ? `<div class="msg err">${msg}</div>` : ""}
+      <div class="modal-actions"><button type="button" class="btn btn-red" id="resetOk">Şifreyi yenile</button><button type="button" class="btn btn-ghost" id="resetBack">Geri</button></div>`;
+    $("overlay").hidden = false;
+  }
+  async function submitReset() {
+    const code = $("rCode").value.trim(), np = $("rPin").value.trim();
+    if (np.length < 4) return showReset("Yeni şifre en az 4 haneli olmalı.");
+    try {
+      const r = await fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, pin: np }), cache: "no-store" });
+      if (r.status === 403) return showReset("Kurtarma kodu yanlış.");
+      if (!r.ok) return showReset("Olmadı, tekrar deneyin.");
+    } catch { return showReset("Sunucuya ulaşılamadı."); }
+    pin = np; try { localStorage.setItem("ik-pin", pin); } catch {}
+    pinMode = false; $("overlay").hidden = true;
+    toast("Yeni şifre kaydedildi");
+    startApi();
   }
   async function submitPin() {
     pin = $("pinIn").value.trim();
@@ -842,6 +865,9 @@ button { cursor: pointer; }
       case "mDel": delForm(); return;
       case "sSave": saveSettings(); return;
       case "pinOk": submitPin(); return;
+      case "forgotBtn": showReset(); return;
+      case "resetOk": submitReset(); return;
+      case "resetBack": askPin(); return;
     }
     const grp = t.parentElement && t.parentElement.id;
     if (grp === "fService" || grp === "fDur" || grp === "fStatus") {
