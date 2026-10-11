@@ -1,0 +1,9 @@
+{
+  "name": "ilhan-kuzu-randevu",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aksoy Erkek Kuaförü – İlhan Kuzu randevu uygulaması",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
