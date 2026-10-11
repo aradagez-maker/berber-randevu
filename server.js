@@ -46,7 +46,7 @@ function send(res, code, body, type = "application/json; charset=utf-8") {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
-    req.on("data", (c) => { size += c.length; if (size > 100_000) { reject(new Error("too big")); req.destroy(); } else chunks.push(c); });
+    req.on("data", (c) => { size += c.length; if (size > 5_000_000) { reject(new Error("too big")); req.destroy(); } else chunks.push(c); });
     req.on("end", () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}")); } catch (e) { reject(e); } });
     req.on("error", reject);
   });
@@ -76,6 +76,22 @@ const server = http.createServer(async (req, res) => {
       const pin = str((await readBody(req)).pin, 32).trim();
       if (pin.length < 4) return send(res, 400, { error: "short" });
       db.pin = pin; save(); return send(res, 200, { ok: true });
+    }
+    // Sunucu boş açıldıysa (ör. yeniden başlatma sonrası) cihazdaki yedekten geri yükleme
+    if (p === "/api/restore" && req.method === "POST") {
+      if (currentPin() || Object.keys(db.appts).length) return send(res, 409, { error: "not empty" });
+      const b = await readBody(req);
+      const pin = str(b.pin, 32).trim();
+      if (pin.length < 4) return send(res, 400, { error: "short" });
+      db.pin = pin;
+      db.settings = b.settings && typeof b.settings === "object" ? cleanSettings(b.settings) : null;
+      for (const a of (Array.isArray(b.appts) ? b.appts : []).slice(0, 20000)) {
+        if (!a || !/^[A-Za-z0-9_-]{1,64}$/.test(String(a.id))) continue;
+        const c = cleanAppt(a);
+        if (c) db.appts[a.id] = { ...c, createdAt: str(a.createdAt, 40), updatedAt: str(a.updatedAt, 40) || c.updatedAt };
+      }
+      save();
+      return send(res, 200, { ok: true, restored: Object.keys(db.appts).length });
     }
     if (p.startsWith("/api/")) {
       if (!pinOk(req)) return send(res, 401, { error: "pin" });

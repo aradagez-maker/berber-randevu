@@ -358,20 +358,42 @@ button { cursor: pointer; }
     if (!r.ok) { const e = new Error("http " + r.status); e.code = "http"; throw e; }
     return r.json();
   }
+  // Her cihaz son listeyi kendinde de saklar; sunucu boş açılırsa buradan geri yüklenir
+  function saveCache() { lsSet("ik-cache", { appts: [...state.appts.values()], settings: state.settings, at: Date.now() }); }
+  async function tryRestore(newPin) {
+    const c = lsGet("ik-cache", null);
+    try {
+      const r = await fetch("/api/restore", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pin: newPin || pin, appts: (c && c.appts) || [], settings: (c && c.settings) || null }), cache: "no-store" });
+      if (!r.ok) return false;
+      const j = await r.json();
+      if (newPin) pin = newPin;
+      try { localStorage.setItem("ik-pin", pin); } catch {}
+      if (j.restored) setTimeout(() => toast(j.restored + " randevu bu cihazdaki yedekten geri yüklendi"), 600);
+      return true;
+    } catch { return false; }
+  }
+  async function recoverOrAsk() {
+    try {
+      const j = await (await fetch("/api/ping", { cache: "no-store" })).json();
+      if (j.setup) { if (pin.length >= 4 && (await tryRestore())) return startApi(); return askPin(false, true); }
+    } catch {}
+    askPin();
+  }
   async function apiLoad() {
     const st = await api("GET", "/state");
     state.appts = new Map((st.appts || []).map((a) => [a.id, a]));
     state.settings = { ...DEFAULT_SETTINGS, ...(st.settings || {}) };
+    saveCache();
     $("sync").textContent = "Kayıtlı · tüm cihazlarda";
     render();
   }
   async function startApi() {
     try { await apiLoad(); }
-    catch (e) { if (e.code === "pin") return askPin(); $("sync").textContent = "Sunucuya ulaşılamadı, tekrar deneniyor…"; }
+    catch (e) { if (e.code === "pin") return recoverOrAsk(); $("sync").textContent = "Sunucuya ulaşılamadı, tekrar deneniyor…"; }
     resolveReady();
     if (!polling) {
       polling = true;
-      setInterval(() => { if (document.visibilityState === "visible" && !pinMode) apiLoad().catch((e) => { if (e.code === "pin") askPin(); else $("sync").textContent = "Bağlantı yok, tekrar deneniyor…"; }); }, 8000);
+      setInterval(() => { if (document.visibilityState === "visible" && !pinMode) apiLoad().catch((e) => { if (e.code === "pin") recoverOrAsk(); else $("sync").textContent = "Bağlantı yok, tekrar deneniyor…"; }); }, 8000);
       document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !pinMode) apiLoad().catch(() => {}); });
     }
   }
@@ -390,7 +412,7 @@ button { cursor: pointer; }
     pin = $("pinIn").value.trim();
     if (setupMode) {
       if (pin.length < 4) return askPin(true, true);
-      try { await api("POST", "/setup", { pin }); } catch (e) { /* başka biri az önce belirlediyse normal girişe dön */ }
+      await tryRestore(pin); // bu cihazda yedek varsa randevular da geri gelir
     }
     try { await api("GET", "/state"); } catch (e) { return askPin(true); }
     try { localStorage.setItem("ik-pin", pin); } catch {}
@@ -404,7 +426,7 @@ button { cursor: pointer; }
         try {
           const r = await fetch("/api/ping", { cache: "no-store" });
           const j = r.ok ? await r.json() : null;
-          if (j && j.app === "ik-randevu") { state.mode = "api"; $("sync").textContent = "Bağlanıyor…"; return j.setup ? askPin(false, true) : startApi(); }
+          if (j && j.app === "ik-randevu") { state.mode = "api"; $("sync").textContent = "Bağlanıyor…"; return j.setup ? ((pin.length >= 4 && (await tryRestore())) ? startApi() : askPin(false, true)) : startApi(); }
         } catch {}
       }
       return useLocal();
@@ -444,7 +466,7 @@ button { cursor: pointer; }
       await db.collection("appts").doc(a.id).set(clean);
     } else if (state.mode === "api") {
       await api("PUT", "/appts/" + encodeURIComponent(a.id), clean);
-      state.appts.set(a.id, { ...clean, id: a.id }); render();
+      state.appts.set(a.id, { ...clean, id: a.id }); saveCache(); render();
     } else {
       state.appts.set(a.id, { ...clean, id: a.id });
       saveLocal(); render();
@@ -453,17 +475,17 @@ button { cursor: pointer; }
   async function deleteAppt(id) {
     await ready;
     if (state.mode === "db") await db.collection("appts").doc(id).delete();
-    else if (state.mode === "api") { await api("DELETE", "/appts/" + encodeURIComponent(id)); state.appts.delete(id); render(); }
+    else if (state.mode === "api") { await api("DELETE", "/appts/" + encodeURIComponent(id)); state.appts.delete(id); saveCache(); render(); }
     else { state.appts.delete(id); saveLocal(); render(); }
   }
   async function writeSettings(s) {
     await ready;
     if (state.mode === "db") await db.doc("config/shop").set(s);
-    else if (state.mode === "api") { await api("PUT", "/settings", s); state.settings = s; render(); }
+    else if (state.mode === "api") { await api("PUT", "/settings", s); state.settings = s; saveCache(); render(); }
     else { state.settings = s; saveLocal(); render(); }
   }
   function writeErr(e) {
-    if (e && e.code === "pin") return askPin();
+    if (e && e.code === "pin") return recoverOrAsk();
     if (e && e.code === "invalid_argument") { state.readOnly = true; toast("Bu sayfada değişiklik yapma yetkiniz yok."); }
     else if (e && e.code === "quota_exceeded") toast("Kayıt alanı doldu. Eski randevuları silin.");
     else toast("Kaydedilemedi, bağlantıyı kontrol edip tekrar deneyin.");
